@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>THDX Unwrap USDT0 → gUSDT (v1.3.5 Stable Connect Fix)</title>
+  <title>THDX Unwrap USDT0 → gUSDT (v1.3.6 Faucet + Auto Refresh)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
   <style>
     body {
@@ -66,20 +66,19 @@
     <button id="connect">🔌 Connect Wallet</button>
     <p id="status">Menunggu koneksi wallet...</p>
     <p id="balance">Saldo: -</p>
-    <input id="amount" type="number" placeholder="Jumlah (contoh: 100)" />
+    <button id="mint" disabled>🪙 Mint 10 Dummy USDT0</button>
+    <input id="amount" type="number" placeholder="Jumlah (contoh: 10)" />
     <button id="unwrap" disabled>🚀 Unwrap Sekarang</button>
     <pre id="log">log siap...</pre>
   </div>
 
   <script>
     const USDT0 = "0x78cf24370174180738c5b8e352b6d14c83a6c9a9";
-    const WRAPPER = "0xcab8f3ed8528655e0c2fad1c504c6cf eccf50b90"; // hapus spasi sebelum disimpan
+    const WRAPPER = "0xcab8f3ed8528655e0c2fad1c504c6cf eccf50b90"; // hapus spasi sebelum save!
     const STABLE = {
       id: 2201,
       hex: "0x899",
-      name: "Stable Testnet",
-      rpc: "https://stable-jsonrpc.testnet.chain0.dev",
-      explorer: "https://blockscout.testnet.stable.xyz"
+      rpc: "https://stable-jsonrpc.testnet.chain0.dev"
     };
 
     let provider, signer, me;
@@ -91,61 +90,57 @@
       console.log(m);
     };
 
-    async function ensureStableChain() {
-      const net = await provider.getNetwork();
-      if (net.chainId === STABLE.id) return true;
-      log("⚙️ Ganti jaringan ke Stable Testnet...");
-      try {
-        await window.ethereum.request({
-          method: "wallet_switchEthereumChain",
-          params: [{ chainId: STABLE.hex }]
-        });
-        return true;
-      } catch (e) {
-        if (e.code === 4902) {
-          log("🔧 Menambahkan jaringan Stable Testnet...");
-          await window.ethereum.request({
-            method: "wallet_addEthereumChain",
-            params: [{
-              chainId: STABLE.hex,
-              chainName: STABLE.name,
-              rpcUrls: [STABLE.rpc],
-              blockExplorerUrls: [STABLE.explorer],
-              nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }
-            }]
-          });
-          return true;
-        } else {
-          log("❌ Tidak bisa ganti network: " + e.message);
-          return false;
-        }
-      }
-    }
-
     async function connectWallet() {
       try {
-        if (!window.ethereum) throw new Error("❌ MetaMask belum terdeteksi.");
+        if (!window.ethereum) throw new Error("MetaMask belum aktif");
         provider = new ethers.providers.Web3Provider(window.ethereum, "any");
         await provider.send("eth_requestAccounts", []);
         signer = provider.getSigner();
         me = await signer.getAddress();
         const net = await provider.getNetwork();
+
+        if (net.chainId !== STABLE.id) {
+          log("⚙️ Ganti network ke Stable Testnet...");
+          await window.ethereum.request({
+            method: "wallet_switchEthereumChain",
+            params: [{ chainId: STABLE.hex }],
+          });
+        }
+
         log(`✅ Connected: ${me}\nChain: ${net.chainId}`);
         document.getElementById("status").textContent = `Wallet: ${me}`;
-        const ok = await ensureStableChain();
-        if (!ok) return;
         document.getElementById("unwrap").disabled = false;
-        await updateBalance();
+        document.getElementById("mint").disabled = false;
+        updateBalance();
       } catch (e) {
         log("❌ Connect error: " + e.message);
       }
     }
 
     async function updateBalance() {
-      const erc20 = new ethers.Contract(USDT0, ["function balanceOf(address) view returns (uint256)"], provider);
-      const bal = await erc20.balanceOf(me);
-      const val = Number(ethers.utils.formatUnits(bal, 6));
-      document.getElementById("balance").textContent = `Saldo: ${val} USDT0`;
+      try {
+        const erc20 = new ethers.Contract(USDT0, ["function balanceOf(address) view returns (uint256)"], provider);
+        const bal = await erc20.balanceOf(me);
+        const val = Number(ethers.utils.formatUnits(bal, 6));
+        document.getElementById("balance").textContent = `Saldo: ${val} USDT0`;
+      } catch (e) {
+        log("⚠️ Gagal baca saldo: " + e.message);
+      }
+    }
+
+    async function mintDummy() {
+      try {
+        const mintAbi = ["function mint(address to, uint256 amount)"];
+        const erc = new ethers.Contract(USDT0, mintAbi, signer);
+        const amt = ethers.utils.parseUnits("10", 6);
+        const tx = await erc.mint(me, amt);
+        log(`🪙 Mint TX: ${tx.hash}`);
+        await tx.wait();
+        log("✅ Mint sukses!");
+        await updateBalance();
+      } catch (e) {
+        log("⚠️ Faucet gagal (kemungkinan token tidak punya fungsi mint)");
+      }
     }
 
     async function unwrapNow() {
@@ -173,13 +168,14 @@
         log(`🚀 Unwrap TX: ${txB.hash}`);
         await txB.wait();
         log("✅ USDT0 sukses diubah jadi gUSDT 🎉");
-        await updateBalance();
+        updateBalance();
       } catch (e) {
         log("❌ Error: " + (e.data?.message || e.message || e));
       }
     }
 
     document.getElementById("connect").onclick = connectWallet;
+    document.getElementById("mint").onclick = mintDummy;
     document.getElementById("unwrap").onclick = unwrapNow;
   </script>
 </body>
