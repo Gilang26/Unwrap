@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>THDX Unwrap USDT0 → gUSDT (v1.3.1 MetaMask Fix)</title>
+  <title>THDX Unwrap USDT0 → gUSDT (v1.3.2)</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -73,22 +74,10 @@
     <pre id="log">log siap...</pre>
   </div>
 
-  <!-- ✅ Ethers.js loader fix -->
   <script>
-    (async () => {
-      if (typeof window.ethers === "undefined") {
-        const s = document.createElement("script");
-        s.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js";
-        document.head.appendChild(s);
-        await new Promise(res => s.onload = res);
-      }
-    })();
-  </script>
-
-  <!-- ✅ Main Logic -->
-  <script>
-    const USDT0 = "0x78cf24370174180738C5B8E352B6d14c83A6C9A9";
-    const WRAPPER = "0xcAB8F3ed8528655E0C2fad1C504c6CfEccf50B90";
+    // === Konfigurasi ===
+    const USDT0 = "0x78cf24370174180738c5b8e352b6d14c83a6c9a9".toLowerCase();
+    const WRAPPER = "0xcab8f3ed8528655e0c2fad1c504c6cf eccf50b90".toLowerCase();
     const STABLE = {
       id: 2201,
       hex: "0x899",
@@ -127,13 +116,7 @@
 
     async function connect() {
       try {
-        for (let i=0; i<10 && typeof ethers==="undefined"; i++)
-          await new Promise(r=>setTimeout(r,300));
-
-        if (typeof window.ethereum === "undefined") {
-          return log("❌ Tidak ada wallet. Buka di browser MetaMask.");
-        }
-
+        if (!window.ethereum) return log("❌ Tidak ada wallet. Gunakan MetaMask/OKX.");
         provider = new ethers.providers.Web3Provider(window.ethereum, "any");
         await provider.send("eth_requestAccounts", []);
         signer = provider.getSigner();
@@ -142,6 +125,7 @@
 
         log(`✅ Connected: ${me}\nChain: ${net.chainId}`);
         await ensureStableNetwork();
+
         document.getElementById("unwrap").disabled = false;
       } catch (e) {
         log("❌ Connect error: " + (e.message || e));
@@ -154,8 +138,15 @@
         if (!amount) return alert("Isi jumlah dulu (mis. 10)");
         const amtLD = ethers.utils.parseUnits(amount, 6);
 
-        const erc20 = new ethers.Contract(USDT0, ["function approve(address,uint256) returns (bool)"], signer);
-        log(`🧾 Approving ${amount} USDT0 ke ${WRAPPER}...`);
+        const erc20 = new ethers.Contract(USDT0, [
+          "function approve(address,uint256) returns (bool)",
+          "function balanceOf(address) view returns (uint256)"
+        ], signer);
+
+        const balance = await erc20.balanceOf(me);
+        if (balance.lt(amtLD)) return log("❌ Saldo USDT0 tidak cukup.");
+
+        log(`🧾 Approving ${amount} USDT0 ke ${WRAPPER} ...`);
         const txA = await erc20.approve(WRAPPER, amtLD);
         log(`⏳ TX Approve: ${txA.hash}`);
         await txA.wait();
