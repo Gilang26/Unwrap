@@ -3,8 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>THDX Unwrap USDT0 → gUSDT (v1.3)</title>
-  <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.min.js"></script>
+  <title>THDX Unwrap USDT0 → gUSDT (v1.3.1 MetaMask Fix)</title>
   <style>
     body {
       font-family: Arial, sans-serif;
@@ -74,8 +73,20 @@
     <pre id="log">log siap...</pre>
   </div>
 
+  <!-- ✅ Ethers.js loader fix -->
   <script>
-    // ==== KONFIGURASI ====
+    (async () => {
+      if (typeof window.ethers === "undefined") {
+        const s = document.createElement("script");
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js";
+        document.head.appendChild(s);
+        await new Promise(res => s.onload = res);
+      }
+    })();
+  </script>
+
+  <!-- ✅ Main Logic -->
+  <script>
     const USDT0 = "0x78cf24370174180738C5B8E352B6d14c83A6C9A9";
     const WRAPPER = "0xcAB8F3ed8528655E0C2fad1C504c6CfEccf50B90";
     const STABLE = {
@@ -91,16 +102,6 @@
       el.scrollTop = el.scrollHeight;
       console.log(m);
     };
-
-    async function wait(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-    async function getInjected() {
-      let eth = window.ethereum;
-      if (eth?.providers?.length) {
-        return eth.providers.find(p => p.isMetaMask) || eth.providers.find(p => p.isOkxWallet) || eth.providers.find(p => p.isCoinbaseWallet) || eth.providers[0];
-      }
-      return eth || window.okxwallet?.ethereum || window.trustwallet?.ethereum || window.coinbaseWalletExtension;
-    }
 
     let provider, signer, me;
 
@@ -126,14 +127,14 @@
 
     async function connect() {
       try {
-        await wait(500);
-        const injected = await getInjected();
-        if (!injected) {
-          alert("❌ Buka situs ini di browser wallet (MetaMask / OKX / Trust)");
-          return;
+        for (let i=0; i<10 && typeof ethers==="undefined"; i++)
+          await new Promise(r=>setTimeout(r,300));
+
+        if (typeof window.ethereum === "undefined") {
+          return log("❌ Tidak ada wallet. Buka di browser MetaMask.");
         }
 
-        provider = new ethers.providers.Web3Provider(injected, "any");
+        provider = new ethers.providers.Web3Provider(window.ethereum, "any");
         await provider.send("eth_requestAccounts", []);
         signer = provider.getSigner();
         me = await signer.getAddress();
@@ -141,11 +142,7 @@
 
         log(`✅ Connected: ${me}\nChain: ${net.chainId}`);
         await ensureStableNetwork();
-
         document.getElementById("unwrap").disabled = false;
-
-        injected.on?.("accountsChanged", () => location.reload());
-        injected.on?.("chainChanged", () => location.reload());
       } catch (e) {
         log("❌ Connect error: " + (e.message || e));
       }
@@ -158,7 +155,7 @@
         const amtLD = ethers.utils.parseUnits(amount, 6);
 
         const erc20 = new ethers.Contract(USDT0, ["function approve(address,uint256) returns (bool)"], signer);
-        log(`🧾 Approving ${amount} USDT0 ke ${WRAPPER} ...`);
+        log(`🧾 Approving ${amount} USDT0 ke ${WRAPPER}...`);
         const txA = await erc20.approve(WRAPPER, amtLD);
         log(`⏳ TX Approve: ${txA.hash}`);
         await txA.wait();
@@ -168,7 +165,7 @@
         const txB = await wrapper.depositTo(me, amtLD);
         log(`🚀 Unwrap TX: ${txB.hash}`);
         await txB.wait();
-        log("✅ Selesai! USDT0 berhasil diubah jadi gUSDT 🎉");
+        log("✅ USDT0 sukses diubah jadi gUSDT 🎉");
       } catch (e) {
         log("❌ Error: " + (e.data?.message || e.message || e));
       }
