@@ -1,9 +1,9 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>THDX Unwrap USDT0 → gUSDT (v1.3.4 Faucet Mode)</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>THDX Unwrap USDT0 → gUSDT (v1.3.5 Stable Connect Fix)</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/ethers/5.7.2/ethers.umd.min.js"></script>
   <style>
     body {
@@ -64,8 +64,8 @@
   <div class="card">
     <h2>💧 THDX Unwrap USDT0 → gUSDT</h2>
     <button id="connect">🔌 Connect Wallet</button>
-    <p id="balance">Saldo: 0 USDT0</p>
-    <button id="mint" disabled>🪙 Mint 10 USDT0 (Faucet)</button>
+    <p id="status">Menunggu koneksi wallet...</p>
+    <p id="balance">Saldo: -</p>
     <input id="amount" type="number" placeholder="Jumlah (contoh: 100)" />
     <button id="unwrap" disabled>🚀 Unwrap Sekarang</button>
     <pre id="log">log siap...</pre>
@@ -73,8 +73,14 @@
 
   <script>
     const USDT0 = "0x78cf24370174180738c5b8e352b6d14c83a6c9a9";
-    const WRAPPER = "0xcab8f3ed8528655e0c2fad1c504c6cf eccf50b90"; // hapus spasi!
-    const STABLE_RPC = "https://stable-jsonrpc.testnet.chain0.dev";
+    const WRAPPER = "0xcab8f3ed8528655e0c2fad1c504c6cf eccf50b90"; // hapus spasi sebelum disimpan
+    const STABLE = {
+      id: 2201,
+      hex: "0x899",
+      name: "Stable Testnet",
+      rpc: "https://stable-jsonrpc.testnet.chain0.dev",
+      explorer: "https://blockscout.testnet.stable.xyz"
+    };
 
     let provider, signer, me;
 
@@ -85,17 +91,50 @@
       console.log(m);
     };
 
-    async function connect() {
+    async function ensureStableChain() {
+      const net = await provider.getNetwork();
+      if (net.chainId === STABLE.id) return true;
+      log("⚙️ Ganti jaringan ke Stable Testnet...");
       try {
-        if (!window.ethereum) throw new Error("❌ Gunakan MetaMask/OKX Wallet.");
+        await window.ethereum.request({
+          method: "wallet_switchEthereumChain",
+          params: [{ chainId: STABLE.hex }]
+        });
+        return true;
+      } catch (e) {
+        if (e.code === 4902) {
+          log("🔧 Menambahkan jaringan Stable Testnet...");
+          await window.ethereum.request({
+            method: "wallet_addEthereumChain",
+            params: [{
+              chainId: STABLE.hex,
+              chainName: STABLE.name,
+              rpcUrls: [STABLE.rpc],
+              blockExplorerUrls: [STABLE.explorer],
+              nativeCurrency: { name: "ETH", symbol: "ETH", decimals: 18 }
+            }]
+          });
+          return true;
+        } else {
+          log("❌ Tidak bisa ganti network: " + e.message);
+          return false;
+        }
+      }
+    }
+
+    async function connectWallet() {
+      try {
+        if (!window.ethereum) throw new Error("❌ MetaMask belum terdeteksi.");
         provider = new ethers.providers.Web3Provider(window.ethereum, "any");
         await provider.send("eth_requestAccounts", []);
         signer = provider.getSigner();
         me = await signer.getAddress();
         const net = await provider.getNetwork();
         log(`✅ Connected: ${me}\nChain: ${net.chainId}`);
+        document.getElementById("status").textContent = `Wallet: ${me}`;
+        const ok = await ensureStableChain();
+        if (!ok) return;
         document.getElementById("unwrap").disabled = false;
-        document.getElementById("mint").disabled = false;
         await updateBalance();
       } catch (e) {
         log("❌ Connect error: " + e.message);
@@ -107,23 +146,6 @@
       const bal = await erc20.balanceOf(me);
       const val = Number(ethers.utils.formatUnits(bal, 6));
       document.getElementById("balance").textContent = `Saldo: ${val} USDT0`;
-    }
-
-    async function mintFaucet() {
-      try {
-        log("🪙 Minting 10 USDT0 ke wallet kamu...");
-        // simulasi faucet mint (karena tidak semua token ada fungsi mint)
-        const faucetABI = ["function mint(address to, uint256 amount)"];
-        const erc = new ethers.Contract(USDT0, faucetABI, signer);
-        const amt = ethers.utils.parseUnits("10", 6);
-        const tx = await erc.mint(me, amt);
-        log(`⏳ Mint TX: ${tx.hash}`);
-        await tx.wait();
-        log("✅ Mint sukses! Coba cek saldo lagi.");
-        await updateBalance();
-      } catch (e) {
-        log("⚠️ Faucet gagal (kemungkinan tidak ada fungsi mint).");
-      }
     }
 
     async function unwrapNow() {
@@ -157,9 +179,8 @@
       }
     }
 
-    document.getElementById("connect").onclick = connect;
+    document.getElementById("connect").onclick = connectWallet;
     document.getElementById("unwrap").onclick = unwrapNow;
-    document.getElementById("mint").onclick = mintFaucet;
   </script>
 </body>
 </html>
