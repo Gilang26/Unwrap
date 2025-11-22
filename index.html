@@ -5,7 +5,6 @@
   <title>Unwrap USDT0 to gUSDT - Stable Testnet</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
-  <!-- ✅ UMD build so window.ethers exists -->
   <script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
 
   <style>
@@ -22,18 +21,20 @@
   <button id="connectBtn" class="primary">Connect Wallet</button>
   <div id="walletAddress"></div>
 
-  <button id="unwrapBtn" class="primary" disabled>Unwrap ke gUSDT</button>
+  <input id="amount" type="text" placeholder="Jumlah USDT0 (contoh: 100)" />
+  <button id="unwrapBtn" class="primary" disabled>Unwrap Sekarang</button>
 
   <div id="status"></div>
 
   <script>
-    // ✅ Contract addresses
     const USDT0_ADDRESS   = "0x78Cf24370174180738C5B8E352B6D14c83a6c9A9";
     const WRAPPER_ADDRESS = "0xcAB8F3ed8528655E0C2fad1C504c6CfEccf50B90";
+    const USDT0_DECIMALS  = 6;
 
     const ERC20_ABI = [
       "function approve(address spender, uint256 amount) external returns (bool)",
-      "function allowance(address owner, address spender) external view returns (uint256)"
+      "function allowance(address owner, address spender) external view returns (uint256)",
+      "function balanceOf(address account) external view returns (uint256)"
     ];
 
     const WRAPPER_ABI = [
@@ -46,6 +47,7 @@
     const connectBtn = document.getElementById("connectBtn");
     const unwrapBtn = document.getElementById("unwrapBtn");
     const walletEl = document.getElementById("walletAddress");
+    const amountInput = document.getElementById("amount");
 
     function log(msg) {
       statusEl.textContent += msg + "\n";
@@ -53,62 +55,80 @@
     }
 
     async function connectWallet() {
-      if (!window.ethereum) {
-        alert("Install MetaMask dulu mas ✅");
-        return;
-      }
+      await window.ethereum.request({ method: "eth_requestAccounts" });
 
-      try {
-        await window.ethereum.request({ method: "eth_requestAccounts" });
+      provider = new window.ethers.providers.Web3Provider(window.ethereum);
+      signer = provider.getSigner();
+      userAddress = await signer.getAddress();
 
-        provider = new window.ethers.providers.Web3Provider(window.ethereum);
-        signer = provider.getSigner();
-        userAddress = await signer.getAddress();
+      walletEl.textContent = "✅ Connected: " + userAddress;
+      unwrapBtn.disabled = false;
 
-        walletEl.textContent = "✅ Connected: " + userAddress;
-        unwrapBtn.disabled = false;
-
-        const net = await provider.getNetwork();
-        log("📡 Chain ID: " + net.chainId.toString());
-        log("✅ Wallet berhasil connect!");
-      } catch (err) {
-        log("❌ Wallet gagal connect: " + err.message);
-      }
+      const net = await provider.getNetwork();
+      log("📡 Chain ID: " + net.chainId.toString());
+      log("✅ Wallet berhasil connect!");
     }
 
     async function unwrap() {
+      const rawAmount = amountInput.value.trim();
+      if (!rawAmount) return alert("Isi jumlah USDT0 dulu mas ✅");
+
+      let target = window.ethers.utils.parseUnits(rawAmount, USDT0_DECIMALS);
+
       unwrapBtn.disabled = true;
-      log("🚀 Mulai proses unwrap...");
+      log("🚀 Mulai unwrap total: " + rawAmount + " USDT0");
 
       try {
         const usdt0 = new window.ethers.Contract(USDT0_ADDRESS, ERC20_ABI, signer);
         const wrapper = new window.ethers.Contract(WRAPPER_ADDRESS, WRAPPER_ABI, signer);
 
-        // ✅ Check allowance
-        log("🔎 Cek allowance...");
-        const allowance = await usdt0.allowance(userAddress, WRAPPER_ADDRESS);
+        // ✅ cek saldo
+        const bal = await usdt0.balanceOf(userAddress);
+        if (bal.lt(target)) {
+          log("❌ Saldo USDT0 kurang. Balance: " + window.ethers.utils.formatUnits(bal, USDT0_DECIMALS));
+          unwrapBtn.disabled = false;
+          return;
+        }
 
-        if (allowance.eq(0)) {
-          log("✅ Kirim approve...");
+        // ✅ cek allowance
+        const allowance = await usdt0.allowance(userAddress, WRAPPER_ADDRESS);
+        if (allowance.lt(target)) {
+          log("✅ Approve unlimited...");
           const tx = await usdt0.approve(WRAPPER_ADDRESS, window.ethers.constants.MaxUint256);
           log("⏳ Approve tx: " + tx.hash);
           await tx.wait();
           log("✅ Approve confirmed!");
         } else {
-          log("✅ Allowance sudah cukup — skip approve");
+          log("✅ Allowance cukup — skip approve");
         }
 
-        // ✅ Correct depositTo call without amount, WITH value
-        log("🔥 Call depositTo...");
+        // ✅ proses unwrap looping
+        while (target.gt(0)) {
+          log("🔎 Preview amountOut...");
 
-        const depTx = await wrapper.depositTo(userAddress, {
-          value: window.ethers.utils.parseUnits("0.01", 18) // ✅ FIX UTAMA
-        });
+          const preview = await wrapper.callStatic.depositTo(userAddress, {
+            value: window.ethers.utils.parseUnits("0.01", 18)
+          });
 
-        log("⏳ depositTo tx: " + depTx.hash);
-        await depTx.wait();
+          if (preview.eq(0)) {
+            log("⚠️ Konversi berhenti — kemungkinan selesai.");
+            break;
+          }
 
-        log("🎉 SUCCESS! gUSDT sudah masuk ke wallet ✅");
+          log("✅ Akan unwrap: " + window.ethers.utils.formatUnits(preview, USDT0_DECIMALS));
+
+          const tx = await wrapper.depositTo(userAddress, {
+            value: window.ethers.utils.parseUnits("0.01", 18)
+          });
+
+          log("⏳ Tx: " + tx.hash);
+          await tx.wait();
+
+          target = target.sub(preview);
+          log("✅ Sisa: " + window.ethers.utils.formatUnits(target, USDT0_DECIMALS) + " USDT0");
+        }
+
+        log("🎉 SELESAI! Semua target USDT0 sudah di-unwrap ✅");
 
       } catch (err) {
         log("❌ ERROR:");
